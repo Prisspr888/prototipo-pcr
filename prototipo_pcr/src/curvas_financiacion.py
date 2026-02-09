@@ -1,5 +1,6 @@
 import polars as pl
 import src.aux_tools as aux_tools
+import src.parametros as params
 
 def convertir_tasa_ea_am(tasa_ea: pl.Expr) -> pl.Expr:
     return (1 + tasa_ea).pow(1/12) - 1
@@ -13,100 +14,120 @@ def procesar_inflacion(df_inflacion: pl.DataFrame) -> pl.DataFrame:
         .sort("fecha")
         .with_columns([
             (1 + pl.col("tasa")).cum_prod().alias("indice_ipc"),
-            aux_tools.yyyymm(pl.col("fecha")).alias("anames")
+            aux_tools.yyyymm(pl.col("fecha")).alias("yyyymm_ipc")
         ])
-        .select(["anames", "indice_ipc"])
+        .select(["yyyymm_ipc", "indice_ipc"])
     )
 
 def procesar_curvas_tasas(
-    df_tasas: pl.DataFrame, 
-    max_nodos_requeridos: int = 122 # Default para cubrir el mes 121 de traslape
+    df_tasas: pl.DataFrame,
+    df_param_compfin: pl.DataFrame
 ) -> pl.DataFrame:
     """
-    Procesa las curvas y GARANTIZA que existan todos los nodos hasta max_nodos_requeridos.
-    Si la curva input llega solo hasta el 120, extrapola la última tasa al 121 y 122.
+    Procesa las curvas garantizando que existan todos los nodos hasta el máximo definido en parámetros por moneda
     """
-    
-    # 1. Identificar todas las curvas únicas (cohortes) en el insumo
-    fechas_curvas = df_tasas.select("fecha_curva").unique()
-    
-    # 2. Crear un esqueleto completo (Producto Cartesiano: Fechas x Nodos 1..122)
-    # Esto asegura que no falte ningún nodo en ninguna curva
-    nodos_esqueleto = pl.DataFrame({"nodo": range(1, max_nodos_requeridos + 1)})
-    
-    esqueleto_completo = (
-        fechas_curvas.join(nodos_esqueleto, how="cross")
+    # Prepara parámetros: obtiene el máximo de meses_max_vigencia por cada moneda/pais que aplica
+    df_nodos_req = (
+        df_param_compfin
+        .filter(pl.col("aplica_comp_financ") == 1)
+        .group_by(["pais_curva", "moneda_curva"])
+        .agg(pl.col("meses_max_vigencia").max().alias("nodos_requeridos"))
     )
-    
-    # 3. Cruzar el esqueleto con los datos reales
-    df_proc = (
-        esqueleto_completo
+
+    # Filtra y une las tasas con sus requerimientos de nodos
+    df_tasas = (
+        df_tasas
         .join(
-            df_tasas.select(["fecha_curva", "nodo", "tasa"]), 
-            on=["fecha_curva", "nodo"], 
-            how="left"
+            df_nodos_req, 
+            left_on=["pais", "moneda"], 
+            right_on=["pais_curva", "moneda_curva"], 
+            how="inner"
         )
-        .sort(["fecha_curva", "nodo"])
+        # Descarta nodos que exceden la vigencia máxima parametrizada + 2 por fechas intermedias
+        .filter(pl.col("mes") <= pl.col("nodos_requeridos").cast(pl.Int64) + 2)
     )
-    
-    # 4. Extrapolación (Flat Forward)
-    # Si falta la tasa en el nodo 121, usamos la del 120 (Forward Fill)
-    df_proc = df_proc.with_columns(
-        pl.col("tasa").forward_fill().over("fecha_curva")
+
+    # Valida que existan los nodos necesarios comparando contra el parámetro de la tabla
+    validacion = (
+        df_tasas
+        .group_by(["fecha_clave", "pais", "moneda", "nodos_requeridos"])
+        .agg(
+            pl.col("mes").max().alias("max_nodo_encontrado")
+        )
     )
-    
-    # 5. Cálculo de Factores
-    df_proc = (
-        df_proc
+
+    # Identificar curvas incompletas respecto a su propio parámetro meses_max_vigencia
+    curvas_incompletas = validacion.filter(
+        pl.col("max_nodo_encontrado") < pl.col("nodos_requeridos").cast(pl.Int64) + 2
+    )
+
+    if curvas_incompletas.height > 0:
+        detalle_error = curvas_incompletas.select(["fecha_clave", "pais", "moneda", "nodos_requeridos", "max_nodo_encontrado"])
+        raise ValueError(
+            f"ERROR INSUMOS INTERES REAL:\n"
+            f"Curvas incompletas requieren nodos requeridos + 2 nodos:\n{detalle_error}."
+        )
+
+    # Cálculo de factores por ["fecha_clave", "pais", "moneda"]
+    df_fact_financieros = (
+        df_tasas
+        .with_columns(
+            pl.col("fecha_clave").cast(pl.Utf8).str.to_date("%Y%m%d")
+        )
+        .sort(["fecha_clave", "pais", "moneda", "mes"])
         .with_columns([
-            convertir_tasa_ea_am(pl.col("tasa")).alias("tasa_mensual_real")
+            convertir_tasa_ea_am(pl.col("tasa_interes")).alias("tasa_mensual_real")
         ])
         .with_columns([
-            # Factor de acumulación real: (1 + r)^t
+            # Factor de acumulación real: a_t = (1 + r)^t
             (1 + pl.col("tasa_mensual_real"))
             .cum_prod()
-            .over("fecha_curva")
-            .alias("factor_capitalizacion")
+            .over(["fecha_clave", "pais", "moneda"])
+            .alias("factor_acumulacion")
         ])
         .with_columns([
-            # Factor de Descuento Puntual v_t
-            (1 / pl.col("factor_capitalizacion")).alias("factor_desc_real")
+            # Factor de descuento v_t
+            (1 / pl.col("factor_acumulacion")).alias("factor_desc_real")
         ])
         .with_columns([
-            # Suma Prefija (Prefix Sum)
+            # descuento real acumulado
             pl.col("factor_desc_real")
             .cum_sum()
-            .over("fecha_curva")
+            .over(["fecha_clave", "pais", "moneda"])
             .alias("sum_desc_real")
         ])
+        .with_columns([
+            pl.col("fecha_clave").alias("fecha_curva"),
+            aux_tools.agregar_meses_fin(pl.col('fecha_clave'), pl.col('mes')).alias('fecha_valoracion')
+        ])
+        .with_columns([
+            # llaves de cruce para devengo
+            aux_tools.yyyymm(pl.col("fecha_curva")).alias("yyyymm_curva"),
+            aux_tools.yyyymm(pl.col('fecha_valoracion')).alias('yyyymm_valoracion')
+        ])
+        .rename({"moneda": "moneda_curva"})
+        .with_columns( # se homologa la moneda para que cruce con los insumos de pdn
+            pl.when((pl.col("pais") == "CO") & (pl.col("moneda_curva") == "UVR"))
+            .then(pl.lit("COP"))
+            .when(pl.col("moneda_curva") == "USD")
+            .then(pl.lit("USD"))
+            .otherwise(pl.col("moneda_curva"))
+            .alias("moneda")
+        )
         .select([
-            pl.col("fecha_curva"), 
-            pl.col("nodo"),        
+            pl.col('yyyymm_curva'),
+            pl.col("fecha_curva"),
+            pl.col("moneda"),
+            pl.col("pais"),
+            pl.col("moneda_curva"),
+            pl.col("mes").alias("nodo"),
+            pl.col('yyyymm_valoracion'),
+            pl.col('fecha_valoracion'),        
             pl.col("tasa_mensual_real"),
-            pl.col("factor_capitalizacion"), 
+            pl.col("factor_acumulacion"), 
             pl.col("factor_desc_real"),      
             pl.col("sum_desc_real")          
         ])
     )
     
-    return df_proc
-
-def generar_insumo_actuarial(
-    df_inflacion: pl.DataFrame,
-    df_tasas: pl.DataFrame
-) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """
-    Función Orquestadora.
-    """
-    # Procesar IPC
-    df_ipc_lookup = procesar_inflacion(df_inflacion)
-    
-    # Procesar Curvas con Extensión Automática a 122 meses
-    df_curvas_lookup = procesar_curvas_tasas(df_tasas, max_nodos_requeridos=122)
-    
-    # Generar llave de cruce eficiente
-    df_curvas_lookup = df_curvas_lookup.with_columns(
-        aux_tools.yyyymm(pl.col("fecha_curva")).alias("anames_curva")
-    )
-    
-    return df_ipc_lookup, df_curvas_lookup
+    return df_fact_financieros
