@@ -145,3 +145,17 @@ def etiquetar_transicion(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(
         pl.when(es_transicion).then(pl.lit("1")).otherwise(pl.lit("0")).alias("transicion")
     )
+
+
+def agregar_meses_fin(
+        fecha: pl.Expr, 
+        meses: pl.Expr | int
+    ) -> pl.Expr:
+    # Si meses es un entero fijo lo convierte a str
+    meses_expr = pl.lit(meses) if isinstance(meses, int) else meses
+    
+    return (
+        fecha
+        .dt.offset_by(meses_expr.cast(pl.Utf8) + "mo")
+        .dt.month_end()
+    )
