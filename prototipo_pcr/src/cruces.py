@@ -151,7 +151,7 @@ def cruzar_gastos_expedicion(
             SELECT
                 g.*,
                 CASE 
-                    WHEN canal <> '*' AND producto <> '*' THEN 1
+                    WHEN canal <> '*' AND producto <> '*' THEN 1  
                     WHEN canal <> '*' AND producto = '*' THEN 2
                     WHEN canal = '*' AND producto = '*' THEN 3
                 END AS prioridad_match
@@ -189,7 +189,7 @@ def cruzar_gastos_expedicion(
         SELECT * 
         FROM cruce
         WHERE rn = 1
-    """).pl()  # .unique()
+    """).pl()
 
 
 def cruzar_excepciones_50_50(
@@ -282,3 +282,146 @@ def cruzar_tasas_cambio(
             {joins_query}
         """
     ).pl()
+
+
+def cruzar_parm_financiacion(
+    base: pl.DataFrame,
+    param_compfinanc: pl.DataFrame
+) -> pl.DataFrame:
+    
+    # Identificador temporal para asegurar integridad
+    df_base_con_id = base.with_row_index("_temp_id")
+    
+    con = duckdb.connect()
+    
+    query = """
+        WITH params_priorizados AS (
+            SELECT 
+                * ,
+                ( (CASE WHEN tipo_insumo = '*' THEN 1 ELSE 0 END) +
+                  (CASE WHEN compania = '*' THEN 1 ELSE 0 END) +
+                  (CASE WHEN ramo_sura = '*' THEN 1 ELSE 0 END) +
+                  (CASE WHEN producto = '*' THEN 1 ELSE 0 END) +
+                  (CASE WHEN tipo_op = '*' THEN 1 ELSE 0 END)
+                ) AS nivel_comodin
+            FROM param_compfinanc
+        ),
+        cruce_con_prioridad AS (
+            SELECT 
+                b._temp_id,
+                -- Se usa el nombre del CTE y el nombre de columna corregido
+                COALESCE(params_priorizados.aplica_comp_financ, 0) as aplica_comp_financ,
+                COALESCE(params_priorizados.aplica_ipc_mensual, 0) as aplica_ipc_mensual,
+                params_priorizados.pais_curva,
+                params_priorizados.moneda_curva,
+                params_priorizados.meses_max_vigencia,
+                ROW_NUMBER() OVER (
+                    PARTITION BY b._temp_id 
+                    ORDER BY params_priorizados.nivel_comodin ASC
+                ) as rn
+            FROM df_base_con_id AS b
+            LEFT JOIN params_priorizados 
+                ON (b.tipo_contabilidad = params_priorizados.tipo_contabilidad)
+                AND (b.tipo_insumo = params_priorizados.tipo_insumo OR params_priorizados.tipo_insumo = '*')
+                AND (b.compania = params_priorizados.compania OR params_priorizados.compania = '*')
+                AND (b.ramo_sura = params_priorizados.ramo_sura OR params_priorizados.ramo_sura = '*')
+                AND (b.producto = params_priorizados.producto OR params_priorizados.producto = '*')
+                AND (b.tipo_op = params_priorizados.tipo_op OR params_priorizados.tipo_op = '*')
+        )
+        SELECT p_final.* EXCLUDE (rn, _temp_id)
+        FROM (
+            SELECT b.*, c.* EXCLUDE (_temp_id)
+            FROM df_base_con_id b
+            LEFT JOIN cruce_con_prioridad c ON b._temp_id = c._temp_id
+            WHERE c.rn = 1
+        ) AS p_final
+        ORDER BY _temp_id 
+    """
+    
+    return con.execute(query).pl()
+
+
+def cruzar_factores_lir(
+    base: pl.DataFrame,
+    factor_ipc: pl.DataFrame,
+    factores_interes: pl.DataFrame,
+) -> pl.DataFrame:
+    """
+    Cruza la base de devengo con los factores financieros de ipc e interes bloqueado o 
+    interes de nacimiento (lir) necesarios para el calculo de la reserva y sus componentes contables
+    
+    :param base: base de producción, gastos o elementos sujetos a reserva PCR
+    :type base: pl.DataFrame
+    :param factor_ipc: tabla de ipc generada en el módulo curvas_financiacion
+    :type factor_ipc: pl.DataFrame
+    :param factores_interes: tabla de factores de curvas de interes generada en curvas_fianciacion
+    :type factores_interes: pl.DataFrame
+    :return: base consolidada con los elementos necesarios para el calculo del saldo de reserva a tasa bloqueada - lir
+    :rtype: DataFrame
+    """
+    con = duckdb.connect()
+    
+    return con.execute(
+        f"""
+            SELECT
+                base.*,
+                -- Lógica de IPC
+                CASE 
+                    WHEN base.aplica_ipc_mensual = 1 THEN ipclir.indice_ipc 
+                    ELSE 1 
+                END AS indice_ipc_lir,
+                CASE 
+                    WHEN base.aplica_ipc_mensual = 1 THEN ipcval.indice_ipc 
+                    ELSE 1 
+                END AS indice_ipc_actual,
+                CASE 
+                    WHEN base.aplica_ipc_mensual = 1 THEN ipcant.indice_ipc 
+                    ELSE 1 
+                END AS indice_ipc_anterior,
+
+                -- Factores de Interés (LIR)
+                intereslir_val.factor_acumulacion AS fact_acum_val,
+                intereslir_val.sum_desc_real AS sum_desc_lir_val,
+                intereslir_ant.factor_acumulacion AS fact_acum_ant,
+                intereslir_ant.sum_desc_real AS sum_desc_lir_ant,
+
+                intereslir_ini.sum_desc_real AS desc_lir_nodo_ini,
+
+                intereslir_fin.sum_desc_real AS sum_desc_lir_nodo_fin,
+                intereslir_fin.factor_desc_real AS desc_lir_nodo_fin
+                
+            FROM base
+            -- Cruces de IPC usando mesid_ipc
+            LEFT JOIN factor_ipc AS ipclir
+                ON base.mes_inicio_vigencia = ipclir.mesid_ipc
+            LEFT JOIN factor_ipc AS ipcval
+                ON base.mes_valoracion = ipcval.mesid_ipc
+            LEFT JOIN factor_ipc AS ipcant
+                ON base.mes_valoracion_anterior = ipcant.mesid_ipc
+            
+            -- Cruces de Interés usando mesid para curvas y valoración
+            LEFT JOIN factores_interes AS intereslir_ini
+                ON base.moneda_curva = intereslir_ini.moneda_curva
+                AND base.pais_curva = intereslir_ini.pais_curva
+                AND base.mes_inicio_vigencia = intereslir_ini.mesid_curva
+                AND intereslir_ini.nodo = 1
+
+            LEFT JOIN factores_interes AS intereslir_val
+                ON base.moneda_curva = intereslir_val.moneda_curva
+                AND base.pais_curva = intereslir_val.pais_curva
+                AND base.mes_inicio_vigencia = intereslir_val.mesid_curva
+                AND base.mes_valoracion = intereslir_val.mesid_valoracion
+                
+            LEFT JOIN factores_interes AS intereslir_ant
+                ON base.moneda_curva = intereslir_ant.moneda_curva
+                AND base.pais_curva = intereslir_ant.pais_curva
+                AND base.mes_inicio_vigencia = intereslir_ant.mesid_curva
+                AND base.mes_valoracion_anterior = intereslir_ant.mesid_valoracion
+
+            LEFT JOIN factores_interes AS intereslir_fin
+                ON base.moneda_curva = intereslir_fin.moneda_curva
+                AND base.pais_curva = intereslir_fin.pais_curva
+                AND base.mes_inicio_vigencia = intereslir_fin.mesid_curva
+                AND base.mes_fin_vigencia = intereslir_fin.mesid_valoracion
+        """
+        ).pl()
