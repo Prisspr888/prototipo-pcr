@@ -14,9 +14,9 @@ def procesar_inflacion(df_inflacion: pl.DataFrame) -> pl.DataFrame:
         .sort("fecha")
         .with_columns([
             (1 + pl.col("tasa")).cum_prod().alias("indice_ipc"),
-            aux_tools.yyyymm(pl.col("fecha")).alias("yyyymm_ipc")
+            aux_tools.yyyymm(pl.col("fecha")).alias("mesid_ipc")
         ])
-        .select(["yyyymm_ipc", "indice_ipc"])
+        .select(["mesid_ipc", "indice_ipc"])
     )
 
 def procesar_curvas_tasas(
@@ -102,26 +102,16 @@ def procesar_curvas_tasas(
         ])
         .with_columns([
             # llaves de cruce para devengo
-            aux_tools.yyyymm(pl.col("fecha_curva")).alias("yyyymm_curva"),
-            aux_tools.yyyymm(pl.col('fecha_valoracion')).alias('yyyymm_valoracion')
+            aux_tools.yyyymm(pl.col("fecha_curva")).alias("mesid_curva"),
+            aux_tools.yyyymm(pl.col('fecha_valoracion')).alias('mesid_valoracion')
         ])
-        .rename({"moneda": "moneda_curva"})
-        .with_columns( # se homologa la moneda para que cruce con los insumos de pdn
-            pl.when((pl.col("pais") == "CO") & (pl.col("moneda_curva") == "UVR"))
-            .then(pl.lit("COP"))
-            .when(pl.col("moneda_curva") == "USD")
-            .then(pl.lit("USD"))
-            .otherwise(pl.col("moneda_curva"))
-            .alias("moneda")
-        )
         .select([
-            pl.col('yyyymm_curva'),
+            pl.col('mesid_curva'),
             pl.col("fecha_curva"),
-            pl.col("moneda"),
-            pl.col("pais"),
-            pl.col("moneda_curva"),
+            pl.col("moneda").alias("moneda_curva"),
+            pl.col("pais").alias("pais_curva"),
             pl.col("mes").alias("nodo"),
-            pl.col('yyyymm_valoracion'),
+            pl.col('mesid_valoracion'),
             pl.col('fecha_valoracion'),        
             pl.col("tasa_mensual_real"),
             pl.col("factor_acumulacion"), 
