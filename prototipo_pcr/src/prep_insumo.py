@@ -658,3 +658,43 @@ def prep_input_componente_inversion(
     )
     
     return input_componente_inversion_directo
+
+
+def anexar_info_financiacion(
+    input_prep: pl.DataFrame,
+    param_financiacion: pl.DataFrame,
+    indice_ipc: pl.DataFrame,
+    factores_interes: pl.DataFrame,
+    fe_valoracion: dt.date,
+) -> pl.DataFrame:
+    
+
+    # Pre-definimos la lista de expresiones de cálculo cuando aplica financiacion
+    columnas_calculadas = [
+        aux_tools.yyyymm(pl.col('fecha_inicio_vigencia')).alias('mes_inicio_vigencia'),
+        aux_tools.yyyymm(pl.col('fecha_fin_devengo')).alias('mes_fin_vigencia'),
+        aux_tools.yyyymm(pl.lit(fe_valoracion)).alias('mes_valoracion'),
+        aux_tools.yyyymm(pl.lit(fe_valoracion).dt.offset_by("-1mo")).alias('mes_valoracion_anterior'),
+        (pl.col('fecha_inicio_vigencia').dt.month_end().dt.day() - pl.col('fecha_inicio_vigencia').dt.day() + 1).alias('dias_vig_ini'),
+        pl.col('fecha_inicio_vigencia').dt.month_end().dt.day().alias('dias_nodo_ini'),
+        pl.col('fecha_fin_devengo').dt.day().alias('dias_vig_fin'),
+        pl.col('fecha_fin_devengo').dt.month_end().dt.day().alias('dias_nodo_fin')
+    ]
+
+    input_final = ( 
+        input_prep
+        # Cruza la tabla parametrica para identificar registros donde aplica
+        .pipe(cruces.cruzar_parm_financiacion, param_financiacion)
+        # Aplicamos el calculo solo donde aplica_comp_financ == 1
+        .with_columns([
+            pl.when(pl.col("aplica_comp_financ") == 1)
+            .then(expr)
+            .otherwise(pl.lit(None))
+            .alias(expr.meta.output_name()) 
+            for expr in columnas_calculadas
+        ])
+        # cruza los factores de la curva de interes e ipc
+        .pipe(cruces.cruzar_factores_lir, indice_ipc, factores_interes)
+    )
+
+    return input_final
