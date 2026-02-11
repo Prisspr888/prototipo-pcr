@@ -401,6 +401,8 @@ def devengar(input_deveng: pl.DataFrame, fe_valoracion: dt.date) -> pl.DataFrame
             .alias("fecha_valoracion_anterior")
         )
     )
+    # define si aplica componente de financiacion
+    aplica_financiacion = pl.col('aplica_comp_financ') == 1
     # define si es componente de inversión
     aplica_comp_inv = pl.col('tipo_insumo') == 'componente_inversion_directo'
     # define si aplica devengo de costo contrato
