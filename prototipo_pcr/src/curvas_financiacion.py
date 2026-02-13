@@ -2,8 +2,7 @@ import polars as pl
 import src.aux_tools as aux_tools
 import src.parametros as params
 
-def convertir_tasa_ea_am(tasa_ea: pl.Expr) -> pl.Expr:
-    return (1 + tasa_ea).pow(1/12) - 1
+
 
 def procesar_inflacion(df_inflacion: pl.DataFrame) -> pl.DataFrame:
     """
@@ -16,8 +15,9 @@ def procesar_inflacion(df_inflacion: pl.DataFrame) -> pl.DataFrame:
             (1 + pl.col("tasa")).cum_prod().alias("indice_ipc"),
             aux_tools.yyyymm(pl.col("fecha")).alias("mesid_ipc")
         ])
-        .select(["mesid_ipc", "indice_ipc"])
+        .select(["mesid_ipc", "tasa", "indice_ipc"])
     )
+
 
 def procesar_curvas_tasas(
     df_tasas: pl.DataFrame,
@@ -72,25 +72,28 @@ def procesar_curvas_tasas(
     df_fact_financieros = (
         df_tasas
         .with_columns(
-            pl.col("fecha_clave").cast(pl.Utf8).str.to_date("%Y%m%d")
+            pl.col("fecha_clave").cast(pl.Utf8).str.to_date("%Y%m%d"),
+            (pl.col('tasa_interes')/100).alias('tasa_interes')
         )
         .sort(["fecha_clave", "pais", "moneda", "mes"])
         .with_columns([
-            convertir_tasa_ea_am(pl.col("tasa_interes")).alias("tasa_mensual_real")
+            # a_t = (1 + EA_t)^(t/12) usa la tasa EA del nodo elevado a su plazo en años
+            ((1 + pl.col("tasa_interes")).pow(pl.col("mes") / 12)).alias("factor_acumulacion")
         ])
         .with_columns([
-            # Factor de acumulación real: a_t = (1 + r)^t
-            (1 + pl.col("tasa_mensual_real"))
-            .cum_prod()
-            .over(["fecha_clave", "pais", "moneda"])
-            .alias("factor_acumulacion")
+            # f_t = (a_t / a_{t-1}) - 1 tasa forward con plazo de 1 mes a partir de cada nodo
+            (
+                (pl.col("factor_acumulacion") / pl.col("factor_acumulacion").shift(1).over(["fecha_clave", "pais", "moneda"])) - 1
+            )
+            .fill_null((1 + pl.col("tasa_interes")).pow(1/12) - 1)
+            .alias("tasa_fwd_real")
         ])
         .with_columns([
-            # Factor de descuento v_t
+            # v_t = 1 / a_t factor de descuento calculado con tasa spot
             (1 / pl.col("factor_acumulacion")).alias("factor_desc_real")
         ])
         .with_columns([
-            # descuento real acumulado
+            # Suma de los v_t individuales
             pl.col("factor_desc_real")
             .cum_sum()
             .over(["fecha_clave", "pais", "moneda"])
@@ -112,8 +115,9 @@ def procesar_curvas_tasas(
             pl.col("pais").alias("pais_curva"),
             pl.col("mes").alias("nodo"),
             pl.col('mesid_valoracion'),
-            pl.col('fecha_valoracion'),        
-            pl.col("tasa_mensual_real"),
+            pl.col('fecha_valoracion'),
+            pl.col('tasa_interes').alias('tasa_efectiva_anual'),
+            pl.col('tasa_fwd_real'),
             pl.col("factor_acumulacion"), 
             pl.col("factor_desc_real"),      
             pl.col("sum_desc_real")          
