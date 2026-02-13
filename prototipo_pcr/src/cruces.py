@@ -321,7 +321,8 @@ def cruzar_parm_financiacion(
                 ) as rn
             FROM df_base_con_id AS b
             LEFT JOIN params_priorizados 
-                ON (b.tipo_contabilidad = params_priorizados.tipo_contabilidad)
+                ON (b.tipo_contabilidad = params_priorizados.tipo_contabilidad) -- debe especificarse
+                AND (b.moneda = params_priorizados.moneda) -- debe especificarse
                 AND (b.tipo_insumo = params_priorizados.tipo_insumo OR params_priorizados.tipo_insumo = '*')
                 AND (b.compania = params_priorizados.compania OR params_priorizados.compania = '*')
                 AND (b.ramo_sura = params_priorizados.ramo_sura OR params_priorizados.ramo_sura = '*')
