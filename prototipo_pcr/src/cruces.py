@@ -372,7 +372,7 @@ def cruzar_factores_lir(
                     ELSE 1 
                 END AS indice_ipc_lir,
                 CASE 
-                    WHEN base.aplica_ipc_mensual = 1 THEN ipclir.tasa 
+                    WHEN base.aplica_ipc_mensual = 0 THEN ipclir.tasa 
                     ELSE 1 
                 END AS tasa_ipc_lir,
                 CASE 
@@ -380,7 +380,7 @@ def cruzar_factores_lir(
                     ELSE 1 
                 END AS indice_ipc_actual,
                 CASE 
-                    WHEN base.aplica_ipc_mensual = 1 THEN ipcval.tasa
+                    WHEN base.aplica_ipc_mensual = 0 THEN ipcval.tasa
                     ELSE 1
                 END AS tasa_ipc_actual,
                 CASE 
@@ -388,7 +388,7 @@ def cruzar_factores_lir(
                     ELSE 1 
                 END AS indice_ipc_anterior,
                 CASE 
-                    WHEN base.aplica_ipc_mensual = 1 THEN ipcant.tasa 
+                    WHEN base.aplica_ipc_mensual = 0 THEN ipcant.tasa 
                     ELSE 1 
                 END AS tasa_ipc_anterior,
 
