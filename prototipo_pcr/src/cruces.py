@@ -371,17 +371,30 @@ def cruzar_factores_lir(
                     ELSE 1 
                 END AS indice_ipc_lir,
                 CASE 
+                    WHEN base.aplica_ipc_mensual = 1 THEN ipclir.tasa 
+                    ELSE 1 
+                END AS tasa_ipc_lir,
+                CASE 
                     WHEN base.aplica_ipc_mensual = 1 THEN ipcval.indice_ipc 
                     ELSE 1 
                 END AS indice_ipc_actual,
                 CASE 
+                    WHEN base.aplica_ipc_mensual = 1 THEN ipcval.tasa
+                    ELSE 1
+                END AS tasa_ipc_actual,
+                CASE 
                     WHEN base.aplica_ipc_mensual = 1 THEN ipcant.indice_ipc 
                     ELSE 1 
                 END AS indice_ipc_anterior,
+                CASE 
+                    WHEN base.aplica_ipc_mensual = 1 THEN ipcant.tasa 
+                    ELSE 1 
+                END AS tasa_ipc_anterior,
 
                 -- Factores de Interés (LIR)
                 intereslir_val.factor_acumulacion AS fact_acum_val,
                 intereslir_val.sum_desc_real AS sum_desc_lir_val,
+                intereslir_val.tasa_fwd_real AS tasa_fwd_real_val,
                 intereslir_ant.factor_acumulacion AS fact_acum_ant,
                 intereslir_ant.sum_desc_real AS sum_desc_lir_ant,
 
