@@ -372,24 +372,24 @@ def cruzar_factores_lir(
                     ELSE 1 
                 END AS indice_ipc_ini,
                 CASE 
-                    WHEN base.aplica_ipc_mensual = 0 THEN ipclir.tasa 
-                    ELSE 1 
+                    WHEN base.aplica_ipc_mensual = 1 THEN ipclir.tasa 
+                    ELSE 0 
                 END AS tasa_ipc_ini,
                 CASE 
                     WHEN base.aplica_ipc_mensual = 1 THEN ipcval.indice_ipc 
                     ELSE 1 
                 END AS indice_ipc_actual,
                 CASE 
-                    WHEN base.aplica_ipc_mensual = 0 THEN ipcval.tasa
-                    ELSE 1
+                    WHEN base.aplica_ipc_mensual = 1 THEN ipcval.tasa
+                    ELSE 0
                 END AS tasa_ipc_actual,
                 CASE 
                     WHEN base.aplica_ipc_mensual = 1 THEN ipcant.indice_ipc 
                     ELSE 1 
                 END AS indice_ipc_anterior,
                 CASE 
-                    WHEN base.aplica_ipc_mensual = 0 THEN ipcant.tasa 
-                    ELSE 1 
+                    WHEN base.aplica_ipc_mensual = 1 THEN ipcant.tasa 
+                    ELSE 0 
                 END AS tasa_ipc_anterior,
 
                 -- Factores de Interés (LIR)
@@ -418,25 +418,37 @@ def cruzar_factores_lir(
             LEFT JOIN factores_interes AS intereslir_ini
                 ON base.moneda_curva = intereslir_ini.moneda_curva
                 AND base.pais_curva = intereslir_ini.pais_curva
-                AND base.mes_inicio_vigencia = intereslir_ini.mesid_curva
+                AND ( -- se debe valorar con la curva del mes inmediatamente anterior
+                        CASE WHEN base.mes_inicio_vigencia % 100 = 1 THEN base.mes_inicio_vigencia - 89 
+                        ELSE base.mes_inicio_vigencia - 1 END
+                    ) = intereslir_ini.mesid_curva
                 AND intereslir_ini.nodo = 1
 
             LEFT JOIN factores_interes AS intereslir_val
                 ON base.moneda_curva = intereslir_val.moneda_curva
                 AND base.pais_curva = intereslir_val.pais_curva
-                AND base.mes_inicio_vigencia = intereslir_val.mesid_curva
+                AND ( -- se debe valorar con la curva del mes inmediatamente anterior
+                        CASE WHEN base.mes_inicio_vigencia % 100 = 1 THEN base.mes_inicio_vigencia - 89 
+                        ELSE base.mes_inicio_vigencia - 1 END
+                    ) = intereslir_ini.mesid_curva
                 AND base.mes_valoracion = intereslir_val.mesid_valoracion
                 
             LEFT JOIN factores_interes AS intereslir_ant
                 ON base.moneda_curva = intereslir_ant.moneda_curva
                 AND base.pais_curva = intereslir_ant.pais_curva
-                AND base.mes_inicio_vigencia = intereslir_ant.mesid_curva
+                AND ( -- se debe valorar con la curva del mes inmediatamente anterior
+                        CASE WHEN base.mes_inicio_vigencia % 100 = 1 THEN base.mes_inicio_vigencia - 89 
+                        ELSE base.mes_inicio_vigencia - 1 END
+                    ) = intereslir_ini.mesid_curva
                 AND base.mes_valoracion_anterior = intereslir_ant.mesid_valoracion
 
             LEFT JOIN factores_interes AS intereslir_fin
                 ON base.moneda_curva = intereslir_fin.moneda_curva
                 AND base.pais_curva = intereslir_fin.pais_curva
-                AND base.mes_inicio_vigencia = intereslir_fin.mesid_curva
+                AND ( -- se debe valorar con la curva del mes inmediatamente anterior
+                        CASE WHEN base.mes_inicio_vigencia % 100 = 1 THEN base.mes_inicio_vigencia - 89 
+                        ELSE base.mes_inicio_vigencia - 1 END
+                    ) = intereslir_ini.mesid_curva
                 AND base.mes_fin_vigencia = intereslir_fin.mesid_valoracion
         """
         ).pl()
