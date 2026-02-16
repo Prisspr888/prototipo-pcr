@@ -370,11 +370,11 @@ def cruzar_factores_lir(
                 CASE 
                     WHEN base.aplica_ipc_mensual = 1 THEN ipclir.indice_ipc 
                     ELSE 1 
-                END AS indice_ipc_lir,
+                END AS indice_ipc_ini,
                 CASE 
                     WHEN base.aplica_ipc_mensual = 0 THEN ipclir.tasa 
                     ELSE 1 
-                END AS tasa_ipc_lir,
+                END AS tasa_ipc_ini,
                 CASE 
                     WHEN base.aplica_ipc_mensual = 1 THEN ipcval.indice_ipc 
                     ELSE 1 
@@ -398,6 +398,7 @@ def cruzar_factores_lir(
                 intereslir_val.tasa_fwd_real AS tasa_fwd_real_val,
                 intereslir_ant.factor_acumulacion AS fact_acum_ant,
                 intereslir_ant.sum_desc_real AS sum_desc_lir_ant,
+                intereslir_ant.tasa_fwd_real AS tasa_fwd_real_ant,
 
                 intereslir_ini.sum_desc_real AS desc_lir_nodo_ini,
 
