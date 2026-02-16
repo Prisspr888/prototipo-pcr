@@ -80,12 +80,15 @@ CAMPOS_OUTPUT_CONTABLE = [
     "fecha_inicio_devengo",
     "fecha_fin_devengo",
     "valor_base_devengo",  # parametros devengo
+]
+CAMPOS_OUTPUT_DIARIO = [
+    # solo aplican para devengo diario - se separan
     "dias_devengados",
     "dias_no_devengados",
-    "control_suma_dias",  # solo estan para devengo diario
+    "control_suma_dias",  
     "dias_constitucion",
     "dias_liberacion",
-    "valor_devengo_diario",  # solo estan para devengo diario
+    "valor_devengo_diario",
 ]
 CAMPOS_OUTPUT_5050 = [
     "mes_constitucion",
@@ -102,6 +105,21 @@ CAMPOS_OUTPUT_CALCULADO = [
     "valor_liberacion_acum",
     "saldo",  # movimientos y saldo
 ]
+CAMPOS_OUTPUT_FINANCIACION = [
+    # Trazabilidad de insumos
+    "pais_curva",
+    "moneda_curva",
+    # Variables formula saldo: base_devengo * factor_ajuste_ipc * factor_cap_real * (remanente / total)
+    "factor_ajuste_ipc",       
+    "factor_cap_real",         
+    "suma_factores_remanente", 
+    "suma_factores_total",     
+    # Variables del Movimiento de Intereses
+    "saldo_anterior",          
+    "tasa_acreditacion",       
+    "acreditacion_intereses",
+]
+
 
 # a qué tipos de contabilidad aplica deterioro
 APLICA_DETERIORO = ["ifrs17_local", "ifrs_17_corporativo"]
