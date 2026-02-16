@@ -379,6 +379,137 @@ def etiquetar_resultado_devengo(data_devengo: pl.DataFrame) -> pl.DataFrame:
     return data_devengo_out
 
 
+import polars as pl
+
+def devengo_comp_financiacion(input_prep_cf: pl.DataFrame) -> pl.DataFrame:
+    """
+    Realiza calculos actuariales de reserva para el caso de PAA con componente de financiacion.
+    El input debe contener las columnas financieras de ipc y factores de curva de interes lir necesarios.
+    """
+    # el estado segun las fechas
+    devengo_no_iniciado = pl.col("fecha_valoracion") < pl.col("fecha_inicio_devengo")
+    # Se incluye el mes final para permitir el último movimiento de liberación e intereses
+    devengo_en_curso = (pl.col("fecha_inicio_devengo") <= pl.col('fecha_valoracion')) & (pl.col('mes_valoracion') <= pl.col('mes_fin_vigencia'))
+    es_periodo_ini = pl.col('mes_valoracion') == pl.col('mes_inicio_vigencia')
+
+    out_devengo_financiacion = (
+        input_prep_cf
+        .with_columns(
+            # Estado del devengo a la fecha de valoracion por trazabilidad
+            pl.when(devengo_no_iniciado)
+            .then(pl.lit("no_iniciado"))
+            .when(devengo_en_curso)
+            .then(pl.lit("en_curso"))
+            .otherwise(pl.lit("finalizado"))
+            .alias("estado_devengo")
+        )
+        .with_columns(
+            # Ponderadores por días exactos de los nodos extremos (todos los del centro son 1.00)
+            (pl.col('dias_vig_ini') / pl.col('dias_nodo_ini')).alias('peso_nodo_ini'),
+            (pl.col('dias_vig_fin') / pl.col('dias_nodo_fin')).alias('peso_nodo_fin'),
+        )
+        .with_columns(
+            # El peso de los dias del nodo actual y nodo anterior
+            pl.when(pl.col('mes_valoracion') == pl.col('mes_inicio_vigencia'))
+            .then(pl.col('peso_nodo_ini'))
+            .when(pl.col('mes_valoracion') == pl.col('mes_fin_vigencia'))
+            .then(pl.col('peso_nodo_fin'))
+            .otherwise(pl.lit(1.0))
+            .alias('peso_nodo_actual'),
+            
+            pl.when(pl.col('mes_valoracion_anterior') == pl.col('mes_inicio_vigencia'))
+            .then(pl.col('peso_nodo_ini'))
+            .when(pl.col('mes_valoracion_anterior') == pl.col('mes_fin_vigencia'))
+            .then(pl.col('peso_nodo_fin'))
+            .otherwise(pl.lit(1.0))
+            .alias('peso_nodo_anterior'),
+        )
+        .with_columns(
+            # suma de factores de descuento total curva reponderando los dos extremos
+            (
+                pl.col('sum_desc_lir_nodo_fin') 
+                - pl.col('desc_lir_nodo_ini') * (1 - pl.col('peso_nodo_ini')) # Ajuste inicio
+                - pl.col('desc_lir_nodo_fin') * (1 - pl.col('peso_nodo_fin')) # Ajuste fin
+            ).alias('suma_factores_total')
+        )
+        .with_columns(
+            # solo si estamos en mes ini o fin se repondera el factor de acumuulacion de intereses
+            pl.when((es_periodo_ini) | (pl.col('mes_valoracion') == pl.col('mes_fin_vigencia')))
+            .then(pl.col('fact_acum_val') * (1 + pl.col('tasa_fwd_real_val')).pow(pl.col('peso_nodo_actual') - 1))
+            .otherwise(pl.col('fact_acum_val'))
+            .alias('factor_cap_real'),
+            
+            # y el anterior...
+            pl.when((pl.col('mes_valoracion_anterior') == pl.col('mes_inicio_vigencia')) | (pl.col('mes_valoracion_anterior') == pl.col('mes_fin_vigencia')))
+            .then(pl.col('fact_acum_ant') * (1 + pl.col('tasa_fwd_real_ant')).pow(pl.col('peso_nodo_anterior') - 1))
+            .otherwise(pl.col('fact_acum_ant'))
+            .alias('factor_cap_real_ant')
+        )
+        .with_columns (
+            # suma de factores a la fecha de valoracion reponderando extremos necesarios
+            pl.when(pl.col('mes_valoracion') >= pl.col('mes_fin_vigencia'))
+            .then(pl.col('suma_factores_total'))    # si se valora en el ultimo nodo es igual al total
+            .otherwise( # Si está en curso solo se repondera el nodo inicial
+                pl.col('sum_desc_lir_val') - pl.col('desc_lir_nodo_ini') * (1 - pl.col('peso_nodo_ini')))
+            .alias('sum_desc_valoracion'),
+            
+            # lo mismo para el periodo anterior
+            pl.when(pl.col('mes_valoracion_anterior') >= pl.col('mes_fin_vigencia'))
+            .then(pl.col('suma_factores_total'))
+            .when(pl.col('mes_valoracion_anterior') < pl.col('mes_inicio_vigencia'))
+            .then(pl.lit(0.0))
+            .otherwise(pl.col('sum_desc_lir_ant') - pl.col('desc_lir_nodo_ini') * (1 - pl.col('peso_nodo_ini')))
+            .alias('sum_desc_anterior')
+        )
+        .with_columns(
+            # sumatoria Futura de lo que queda por devengar desde t+1
+            (pl.col('suma_factores_total') - pl.col('sum_desc_anterior')).alias('suma_factores_remanente_ant'),
+            (pl.col('suma_factores_total') - pl.col('sum_desc_valoracion')).alias('suma_factores_remanente')
+        )
+        .with_columns(          
+            # indice relativo de ipc fecha actual y anterior reponderando el primer mes por el peso de los dias
+            ( ( pl.col('indice_ipc_actual')/pl.col('indice_ipc_ini') ) * ( ( 1 + pl.col('tasa_ipc_ini') ).pow( pl.col('peso_nodo_ini') ) ) ).alias('factor_ajuste_ipc'),
+            ( (pl.col('indice_ipc_anterior')/pl.col('indice_ipc_ini') ) * ( ( 1 + pl.col('tasa_ipc_ini') ).pow( pl.col('peso_nodo_ini') ) ) ).alias('factor_ajuste_ipc_ant'),
+            # tasa nominal para acreditacion de intereses
+            (( (1 + pl.col('tasa_fwd_real_val')) * (1 + pl.col('tasa_ipc_actual')) ).pow(pl.col('peso_nodo_actual')) - 1).alias('tasa_acreditacion'),
+        )
+        .with_columns(
+            # calculo del saldo de reserva anterior y del saldo actual (en valor absoluto)
+            pl.when(devengo_en_curso)
+            .then( (pl.col('valor_base_devengo') * pl.col('factor_ajuste_ipc_ant') * pl.col('factor_cap_real_ant') * pl.col('suma_factores_remanente_ant') / pl.col('suma_factores_total')).abs() )
+            .otherwise(pl.lit(0.0))
+            .alias('saldo_anterior'),
+            
+            # saldo actual
+            pl.when(devengo_en_curso)
+            .then( (pl.col('valor_base_devengo') * pl.col('factor_ajuste_ipc') * pl.col('factor_cap_real') * pl.col('suma_factores_remanente') / pl.col('suma_factores_total')).abs() )
+            .otherwise(pl.lit(0.0))
+            .alias('saldo')
+        )
+        .with_columns(
+            pl.when(es_periodo_ini).then(pl.col('valor_base_devengo').abs()).otherwise(pl.lit(0.0)).alias('valor_constitucion')
+        )
+        .with_columns(
+            # calculo de liberacion y acreditacion de intereses a tasa nominal (en valor absoluto)
+            pl.when(devengo_en_curso)
+            .then( (pl.col('saldo_anterior') * pl.col('tasa_acreditacion')).abs() )
+            .otherwise(pl.lit(0.0))
+            .alias('acreditacion_intereses')
+        )
+        .with_columns(
+            # la liberacion del periodo
+            pl.when(devengo_en_curso)
+            .then((pl.col('saldo_anterior') + pl.col('acreditacion_intereses') - pl.col('saldo') + pl.col('valor_constitucion')).abs())
+            .otherwise(pl.lit(0.0))
+            .alias('valor_liberacion'),
+            # la liberacion acumulada por trazabilidad (es compleja de calcular y no requerida)
+            pl.lit(None).cast(pl.Float64).alias('valor_liberacion_acum')
+        )
+    )
+    return out_devengo_financiacion
+
+
+
 def devengar(input_deveng: pl.DataFrame, fe_valoracion: dt.date) -> pl.DataFrame:
     """
     Recibe cualquier input preprocesado para devengamiento
@@ -419,24 +550,31 @@ def devengar(input_deveng: pl.DataFrame, fe_valoracion: dt.date) -> pl.DataFrame
         .then(pl.lit("componente_inversion"))
         .when(aplica_5050)
         .then(pl.lit("regla_50_50"))
+        .when(aplica_financiacion)
+        .then(pl.lit('componente_financiacion'))
         .otherwise(pl.lit("diario"))
         .alias("regla_devengo")
     )
     
+    input_devengo_comp_financiacion = input_devengo.filter(aplica_financiacion)
     input_devengo_comp_inv = input_devengo.filter(aplica_comp_inv)
     input_devengo_5050 = input_devengo.filter(aplica_5050 & (~aplica_costo_contrato) & (~aplica_comp_inv))
     input_devengo_costcon = input_devengo.filter(aplica_costo_contrato & (~aplica_5050) & (~aplica_comp_inv))
     input_devengo_diario = input_devengo.filter(
-        (~aplica_5050) & (~aplica_costo_contrato) & (~aplica_comp_inv)
+        (~aplica_5050) & (~aplica_costo_contrato) & (~aplica_comp_inv) & (~aplica_financiacion)
     )
 
     # se inicializan outputs vacío y campos output como copia de la lista (porque si no modifica la original)
     outputs, campos_output = [], params.CAMPOS_OUTPUT_CONTABLE.copy()
     # aplica el devengamiento a cada particion solo si tiene datos de entrada
+    if input_devengo_comp_financiacion.height > 0:
+        outputs.append(devengo_comp_financiacion(input_devengo_comp_financiacion))
+        campos_output.extend(params.CAMPOS_OUTPUT_FINANCIACION)
     if input_devengo_comp_inv.height > 0:
         outputs.append(devengo_componente_inversion(input_devengo_comp_inv))
     if input_devengo_diario.height > 0:
         outputs.append(deveng_diario(input_devengo_diario))
+        campos_output.append(params.CAMPOS_OUTPUT_DIARIO)
     if input_devengo_5050.height > 0:
         outputs.append(
             deveng_cincuenta(input_devengo_5050, fe_valoracion=fe_valoracion)
@@ -464,6 +602,11 @@ def devengar(input_deveng: pl.DataFrame, fe_valoracion: dt.date) -> pl.DataFrame
                     pl.col("valor_liberacion_acum") * -1 * pl.col("signo_constitucion")
                 ).alias("valor_liberacion_acum"),
                 (pl.col("saldo") * pl.col("signo_constitucion")).alias("saldo"),
+                # El signo de la acreditación de intereses siempre es el mismo de la constitución
+                pl.when(pl.col("acreditacion_intereses").is_not_nan())
+                .then(pl.col("acreditacion_intereses") * pl.col("signo_constitucion"))
+                .otherwise(pl.lit(None))
+                .alias("acreditacion_intereses"),
             ]
         )
         .with_columns(
