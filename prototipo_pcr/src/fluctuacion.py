@@ -34,8 +34,12 @@ def calc_fluctuacion(
     data_devengo_mext = (
         data_devengo_mext.pipe(
             cruces.cruzar_tasas_cambio, tasas_cambio, liquidacion=False
+        ) 
+        # Se debe incluir el efecto de la acreditacion de intereses en la fluctuacion constitucion
+        .with_columns(
+            ((pl.col("saldo") + pl.col("acreditacion_intereses").fill_nan(0.0)) * delta_tc).alias("fluctuacion_constitucion")
         )
-        .with_columns((pl.col("saldo") * delta_tc).alias("fluctuacion_constitucion"))
+        # ANTES: .with_columns((pl.col("saldo") * delta_tc).alias("fluctuacion_constitucion"))
         .with_columns(
             # El signo de la liberacion se invierte para reflejar el efecto economico
             (-1 * pl.col("valor_liberacion") * delta_tc).alias("fluctuacion_liberacion")
