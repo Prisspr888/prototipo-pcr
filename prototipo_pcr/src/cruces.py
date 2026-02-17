@@ -401,6 +401,7 @@ def cruzar_factores_lir(
                 intereslir_ant.tasa_fwd_real AS tasa_fwd_real_ant,
 
                 intereslir_ini.sum_desc_real AS desc_lir_nodo_ini,
+                intereslir_ini.factor_acumulacion AS fact_acum_ini,
 
                 intereslir_fin.sum_desc_real AS sum_desc_lir_nodo_fin,
                 intereslir_fin.factor_desc_real AS desc_lir_nodo_fin
