@@ -379,8 +379,6 @@ def etiquetar_resultado_devengo(data_devengo: pl.DataFrame) -> pl.DataFrame:
     return data_devengo_out
 
 
-import polars as pl
-
 def devengo_comp_financiacion(input_prep_cf: pl.DataFrame) -> pl.DataFrame:
     """
     Realiza calculos actuariales de reserva para el caso de PAA con componente de financiacion.
@@ -577,7 +575,7 @@ def devengar(input_deveng: pl.DataFrame, fe_valoracion: dt.date) -> pl.DataFrame
         outputs.append(devengo_componente_inversion(input_devengo_comp_inv))
     if input_devengo_diario.height > 0:
         outputs.append(deveng_diario(input_devengo_diario))
-        campos_output.extend(params.CAMPOS_OUTPUT_DIARIO)
+        campos_output.extend(params.CAMPOS_OUTPUT_DIARIO)   # estos campos tambien son independientes
     if input_devengo_5050.height > 0:
         outputs.append(
             deveng_cincuenta(input_devengo_5050, fe_valoracion=fe_valoracion)
