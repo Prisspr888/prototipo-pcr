@@ -382,7 +382,7 @@ def etiquetar_resultado_devengo(data_devengo: pl.DataFrame) -> pl.DataFrame:
 def devengo_comp_financiacion(input_prep_cf: pl.DataFrame) -> pl.DataFrame:
     """
     Realiza calculos actuariales de reserva para el caso de PAA con componente de financiacion.
-    El input debe contener las columnas financieras de ipc y factores de curva de interes lir necesarios.
+    El input debe ser un insumo preprocesado y contener las columnas financieras de ipc y factores de curva de interes
     """
     # el estado segun las fechas
     devengo_no_iniciado = pl.col("fecha_valoracion") < pl.col("fecha_inicio_devengo")
