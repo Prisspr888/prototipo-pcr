@@ -118,6 +118,15 @@ CAMPOS_OUTPUT_FINANCIACION = [
     "saldo_anterior",          
     "tasa_acreditacion",       
     "acreditacion_intereses",
+
+    # campos para test
+    #"peso_nodo_ini",
+    #"peso_nodo_fin",
+    #"tasa_ipc_actual",
+    #"tasa_fwd_real_val",
+    #"saldo_anterior",
+    #'factor_ajuste_ipc_ant',
+    #'factor_cap_real_ant',
 ]
 
 
