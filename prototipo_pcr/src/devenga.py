@@ -433,17 +433,20 @@ def devengo_comp_financiacion(input_prep_cf: pl.DataFrame) -> pl.DataFrame:
             ).alias('suma_factores_total')
         )
         .with_columns(
-            # solo si estamos en mes ini o fin se repondera el factor de acumuulacion de intereses
-            pl.when((es_periodo_ini) | (pl.col('mes_valoracion') == pl.col('mes_fin_vigencia')))
-            .then(pl.col('fact_acum_val') * (1 + pl.col('tasa_fwd_real_val')).pow(pl.col('peso_nodo_actual') - 1))
-            .otherwise(pl.col('fact_acum_val'))
+            # el primer nodo del factor de acumulacion se ajusta en toda la curva
+            (pl.col('fact_acum_ini').pow(pl.col('peso_nodo_ini') - 1)).alias('ajuste_base_ini'),
+        )
+        .with_columns(
+            # el ultimo nodo solo se ajusta si ya estamos en fin de vigencia
+            pl.when(pl.col('mes_valoracion') == pl.col('mes_fin_vigencia'))
+            .then(pl.col('fact_acum_val') * pl.col('ajuste_base_ini') * ((1 + pl.col('tasa_fwd_real_val')).pow(pl.col('peso_nodo_fin') - 1)))
+            .otherwise(pl.col('fact_acum_val') * pl.col('ajuste_base_ini'))
             .alias('factor_cap_real'),
-            
-            # y el anterior...
-            pl.when((pl.col('mes_valoracion_anterior') == pl.col('mes_inicio_vigencia')) | (pl.col('mes_valoracion_anterior') == pl.col('mes_fin_vigencia')))
-            .then(pl.col('fact_acum_ant') * (1 + pl.col('tasa_fwd_real_ant')).pow(pl.col('peso_nodo_anterior') - 1))
-            .otherwise(pl.col('fact_acum_ant'))
-            .alias('factor_cap_real_ant')
+            # el mismo ajuste para el factor del mes anterior
+            pl.when(pl.col('mes_valoracion_anterior') == pl.col('mes_fin_vigencia'))
+            .then(pl.col('fact_acum_ant') * pl.col('ajuste_base_ini') * ((1 + pl.col('tasa_fwd_real_ant')).pow(pl.col('peso_nodo_fin') - 1)))
+            .otherwise(pl.col('fact_acum_ant') * pl.col('ajuste_base_ini'))
+            .alias('factor_cap_real_ant'),
         )
         .with_columns (
             # suma de factores a la fecha de valoracion reponderando extremos necesarios
@@ -479,7 +482,7 @@ def devengo_comp_financiacion(input_prep_cf: pl.DataFrame) -> pl.DataFrame:
             .then( (pl.col('valor_base_devengo') * pl.col('factor_ajuste_ipc_ant') * pl.col('factor_cap_real_ant') * pl.col('suma_factores_remanente_ant') / pl.col('suma_factores_total')).abs() )
             .otherwise(pl.lit(0.0))
             .alias('saldo_anterior'),
-            
+
             # saldo actual
             pl.when(devengo_en_curso)
             .then( (pl.col('valor_base_devengo') * pl.col('factor_ajuste_ipc') * pl.col('factor_cap_real') * pl.col('suma_factores_remanente') / pl.col('suma_factores_total')).abs() )
@@ -574,7 +577,7 @@ def devengar(input_deveng: pl.DataFrame, fe_valoracion: dt.date) -> pl.DataFrame
         outputs.append(devengo_componente_inversion(input_devengo_comp_inv))
     if input_devengo_diario.height > 0:
         outputs.append(deveng_diario(input_devengo_diario))
-        campos_output.append(params.CAMPOS_OUTPUT_DIARIO)
+        campos_output.extend(params.CAMPOS_OUTPUT_DIARIO)
     if input_devengo_5050.height > 0:
         outputs.append(
             deveng_cincuenta(input_devengo_5050, fe_valoracion=fe_valoracion)
@@ -610,9 +613,10 @@ def devengar(input_deveng: pl.DataFrame, fe_valoracion: dt.date) -> pl.DataFrame
             ]
         )
         .with_columns(
-            (pl.col("saldo") 
-             - pl.col("valor_constitucion")
-             - pl.col("valor_liberacion")
+            (pl.col("saldo").fill_null(0.0).fill_nan(0.0)
+             - pl.col("valor_constitucion").fill_null(0.0).fill_nan(0.0)
+             - pl.col("valor_liberacion").fill_null(0.0).fill_nan(0.0)
+             - pl.col('acreditacion_intereses').fill_null(0.0).fill_nan(0.0)    # la acreditacion de intereses se agrega a la ecuación
             ).alias("saldo_anterior"),
         )
         .pipe(etiquetar_resultado_devengo)
