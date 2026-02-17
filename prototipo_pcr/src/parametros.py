@@ -139,6 +139,7 @@ COLUMNAS_CALCULO = [
     "valor_constitucion",
     "valor_liberacion",
     "saldo",
+    "acreditacion_intereses",   # Nuevo con componente financiacion
     "fluctuacion_liberacion",
     "fluctuacion_constitucion",
     "constitucion_deterioro",

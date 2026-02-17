@@ -93,6 +93,7 @@ def pivotear_output(
                         "fluctuacion_constitucion",
                         "constitucion_deterioro",
                         "saldo",
+                        "acreditacion_intereses",   # Nuevo para componente de financiacion
                     ]
                 )
             )
@@ -109,7 +110,7 @@ def pivotear_output(
                     ]
                 )
             )
-            .then(pl.lit(0))
+            .then(pl.lit(0.0))
             .otherwise(pl.col("valor_md"))
             .alias("valor_md")
         )
