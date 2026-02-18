@@ -42,6 +42,10 @@ HOJA_SEGUIMIENTO_REA = "seguimiento_rea_noprop"
 HOJA_ONEROSIDAD = "onerosidad"
 HOJA_RECUP_ONEROSIDAD = "recup_onerosidad"
 
+# Insumos de componente de financiacion
+HOJA_PARAM_FINANCIACION = "componente_financiacion"
+RUTA_INFLACION = base_dir.parent / "inputs" / "inflacion_mensual.xlsx"
+RUTA_INFLACION = base_dir.parent / "inputs" / "irr_mensual_202411.xlsx"
 
 # Fechas relevantes para cada ejecución
 FECHA_VALORACION = date(2025, 9, 30)
